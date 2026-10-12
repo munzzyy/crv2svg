@@ -7,11 +7,18 @@ spans the ink of the laid-out line, and the block's transform is applied last.
 
 import math
 
+from .errors import CrvError
 from .model import Path, Span, _span_extent
 
+COORD_LIMIT = 1e9
 
-def layout(matrix, lines, base):
-    """Return (paths, problem). problem is None, or why the text could not be placed."""
+
+def layout(matrix, lines, base, padded=False):
+    """Return (paths, problem). problem is None, or why the text could not be placed.
+
+    padded is for releases before 9, whose base line is a tenth longer than the ink. Which
+    end the extra length sits on is not known, so the ink is centred on the line.
+    """
     if not any(outlines for line in lines for _, outlines, _ in line):
         return [], None
     if len(lines) != 1:
@@ -24,7 +31,7 @@ def layout(matrix, lines, base):
         return [], "text with an empty base line"
     ux, uy = (end[0] - start[0]) / length, (end[1] - start[1]) / length
 
-    placed, pen, ink_left = [], 0.0, None
+    placed, pen, ink_left, ink_right = [], 0.0, None, None
     for advance, outlines, metrics in lines[0]:
         origin = pen + metrics[0]
         for path in outlines:
@@ -32,9 +39,13 @@ def layout(matrix, lines, base):
                 for x, _ in _span_extent(span):
                     if ink_left is None or origin + x < ink_left:
                         ink_left = origin + x
+                    if ink_right is None or origin + x > ink_right:
+                        ink_right = origin + x
         placed.append((origin, metrics[1], outlines))
         pen += advance
     ink_left = ink_left or 0.0
+    if padded:
+        ink_left -= (length - ((ink_right or 0.0) - ink_left)) / 2
 
     a, b, tx, c, d, ty = (matrix or [1, 0, 0, 0, 1, 0, 0, 0, 1])[:6]
     scale = max(abs(a), abs(b), abs(c), abs(d), 1e-300)
@@ -48,7 +59,10 @@ def layout(matrix, lines, base):
         along, up = origin - ink_left + p[0], lift + p[1]
         x = start[0] + ux * along - uy * up
         y = start[1] + uy * along + ux * up
-        return (a * x + b * y + tx, c * x + d * y + ty, 0.0)
+        px, py = a * x + b * y + tx, c * x + d * y + ty
+        if not (abs(px) < COORD_LIMIT and abs(py) < COORD_LIMIT):
+            raise CrvError("text lands at a position that is not a usable number")
+        return (px, py, 0.0)
 
     paths = []
     for origin, lift, outlines in placed:

@@ -100,7 +100,7 @@ def _read(data):
             return b"".join(parts)[:size]
         return big(start, size)
 
-    out, seen = {}, set()
+    out, seen, budget = {}, set(), len(data)
     todo = [(root[4], "")]
     while todo:
         idx, prefix = todo.pop()
@@ -111,6 +111,10 @@ def _read(data):
         todo.append((left, prefix))
         todo.append((right, prefix))
         if kind == 2:
+            # Streams cannot overlap, so together they never outweigh the file.
+            budget -= entries[idx][6]
+            if budget < 0:
+                raise CrvError("compound file streams add up to more than the file")
             out[prefix + name] = stream(entries[idx])
         elif kind == 1:
             todo.append((child, prefix + name + "/"))

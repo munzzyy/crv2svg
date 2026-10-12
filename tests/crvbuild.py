@@ -107,6 +107,8 @@ class Writer:
         self.slots = 1
         self.modern = False
         self.base = 7
+        self.wide = False
+        self.sheet = 0
 
     def u8(self, v):
         self.out += struct.pack("<B", v)
@@ -145,7 +147,7 @@ class Writer:
             self.slots += 1
         else:
             index = self.classes[name]
-            if index < 0x7FFF:
+            if index < 0x7FFF and not self.wide:
                 self.u16(0x8000 | index)
             else:
                 self.u16(0x7FFF)
@@ -189,12 +191,12 @@ def _xyz(w, p):
     w.f64(p[2] if len(p) > 2 else 0.0)
 
 
-def _contour(w, spans, span_type_override=None):
+def _contour(w, spans, span_type_override=None, tolerance=4e-5):
     w.obj("vdContour")
     contour_version = {5: 3, 6: 4}.get(w.base, 7 if w.base >= 8 else 6)
     w.u32(contour_version)
     w.i32(-1)
-    w.f64(4e-5)
+    w.f64(tolerance)
     w.u8(0)
     w.f64(0.0)
     w.u8(0)
@@ -237,6 +239,7 @@ def _contour(w, spans, span_type_override=None):
 
 
 def _base(w, params, matrix=None):
+    sheet = w.sheet
     w.u32(w.base)
     w.raw(b"\x11" * 16)
     w.raw(b"\x22" * 16)
@@ -268,11 +271,10 @@ def _base(w, params, matrix=None):
                 w.f64(value)
     else:
         w.null()
-    if w.base == 5:
-        w.u32(0)
-        return
     if w.base < 10:
-        w.u32(0)
+        w.u32(sheet)
+    if w.base == 5:
+        return
     w.u32(1)
     w.f64(1.7976931348623157e308)
     w.f64(1.7976931348623157e308)
@@ -294,8 +296,9 @@ def _base(w, params, matrix=None):
         w.f64(v)
     if w.base >= 10:
         _label(w, 1)
-        w.u32(len(uuid))
-        w.raw(uuid)
+        sheet_id = ("%08d-0000-0000-0000-000000000000" % sheet).encode("ascii")
+        w.u32(len(sheet_id))
+        w.raw(sheet_id)
 
 
 def _label(w, version):
@@ -326,7 +329,9 @@ def _text(w, item):
         w.obj("txtWord")
         w.u32(1)
         w.u32(len(glyphs))
-        for advance, offset, outlines in glyphs:
+        for glyph in glyphs:
+            advance, offset, outlines = glyph[:3]
+            lift = glyph[3] if len(glyph) > 3 else 0.0
             w.obj("txtChar")
             w.u32(3 if old else 4)
             w.u32(65)
@@ -337,7 +342,7 @@ def _text(w, item):
             w.u32(len(outlines))
             for spans in outlines:
                 _contour(w, spans)
-            _group_tail(w, [offset, 0.0, 7.0, 7.0, 7.0, advance, 1.0] + ([] if old else [0.0]))
+            _group_tail(w, [offset, lift, 7.0, 7.0, 7.0, advance, 1.0] + ([] if old else [0.0]))
         w.f64(0.0)
         w.string("3,0Test Sans,,1.0000")
         for v in (7.0, 7.0, 7.0, 7.0) + (() if old else (1.0,)):
@@ -359,6 +364,13 @@ def _text(w, item):
 
 def _item(w, item):
     kind = item["kind"]
+    outer = w.sheet
+    w.sheet = item.get("sheet", outer)
+    _item_body(w, item, kind)
+    w.sheet = outer
+
+
+def _item_body(w, item, kind):
     if kind == "text":
         _text(w, item)
     elif kind == "group":
@@ -381,6 +393,52 @@ def _item(w, item):
         w.u32(13)
         w.u32(len(item["image"]))
         w.raw(item["image"])
+    elif kind in ("oldbitmap", "oldmodel"):
+        w.obj("vcCadBitmap" if kind == "oldbitmap" else "vcCadModelPreview")
+        _base(w, None)
+        w.u32(5)
+        w.u8(kind == "oldmodel")
+        _item(w, {"kind": "contour", "spans": square(0, 0, 3)})
+        w.u8(1)
+        w.u32(1)
+        w.u32(0)
+        w.u32(4096)
+        w.u32(5)
+        w.raw(b"\x5d\x00\x00\x10\x00")
+        w.u32(len(item["image"]))
+        w.raw(item["image"])
+        w.raw(bytes(range(256)) * 4)
+        w.u32(0)
+        w.u32(120)
+        w.string("FromClipboard")
+        w.i32(-1)
+        w.u8(1)
+        if kind == "oldmodel":
+            w.u32(1)
+            w.raw(b"\x55" * 16)
+    elif kind == "model":
+        w.obj("vcCadModelPreview")
+        _base(w, None)
+        w.u32(6)
+        for v in IDENTITY + [0.0, 0.0]:
+            w.f64(v)
+        _item(w, {"kind": "contour", "spans": square(0, 0, 3)})
+        w.u32(120)
+        w.string("")
+        w.raw(b"\x01\x01\x01\0\0\0\0\0\0\0")
+        w.u32(4096)
+        w.u32(5)
+        w.raw(b"\x5d\x00\x00\x10\x00")
+        w.u32(len(item["image"]))
+        w.raw(item["image"])
+        w.u32(64)
+        w.raw(b"\xff" * 64)
+        w.u32(2)
+        w.raw(b"\x66" * 16)
+    elif kind == "component":
+        w.obj("vcActiveComponentPreview")
+        _base(w, None)
+        w.u32(1)
     elif kind == "dimension":
         w.obj("vcCadLinearDimensioningObject")
         _base(w, None)
@@ -409,7 +467,7 @@ def _item(w, item):
         w.obj("vcCadContour")
         _base(w, item.get("params"))
         w.u32(2)
-        _contour(w, item["spans"], item.get("span_type"))
+        _contour(w, item["spans"], item.get("span_type"), item.get("tolerance", 4e-5))
         w.u32(item.get("tabs", 0))
         for _ in range(item.get("tabs", 0)):
             w.obj("vcToolpathTab")
@@ -439,8 +497,9 @@ def _item(w, item):
         w.raw(item.get("body", b""))
 
 
-def build_vectors(layers, material=(0.0, 0.0, 24.0, 12.0), modern=False, base=None):
+def build_vectors(layers, material=(0.0, 0.0, 24.0, 12.0), modern=False, base=None, wide=False):
     w = Writer()
+    w.wide = wide
     w.base = base or (9 if modern else 7)
     w.modern = w.base >= 9
     w.u32(1)
@@ -478,20 +537,20 @@ def build_version(product="VCarve Pro", version="8.505"):
 
 def build_material(material, units, modern):
     x, y, width, height = material
-    out = struct.pack("<IBB", 8 if modern else 5, {"in": 0, "mm": 1}[units], 1)
+    out = struct.pack("<IBB", 8 if modern else 5, {"in": 0, "mm": 1, None: 9}[units], 1)
     out += struct.pack("<6d", x, y, -0.75, x + width, y + height, 0.0)
     return out + b"\0" * 8
 
 
 def build_crv(layers, material=(0.0, 0.0, 24.0, 12.0), preview=b"GIF89a-not-a-real-image",
               product="VCarve Pro", version="8.505", extra_streams=None, modern=False,
-              units="in", base=None):
+              units="in", base=None, wide=False):
     streams = {
-        "VectorData/2dDataV2": build_vectors(layers, material, modern, base),
+        "VectorData/2dDataV2": build_vectors(layers, material, modern, base, wide),
         "VersionData/Version": build_version(product, version),
         "PreviewData/Preview2D_GIF": preview,
     }
-    if material and units:
+    if material:
         streams["VectorData/MaterialSize"] = build_material(material, units, modern)
     streams.update(extra_streams or {})
     return build_cfb(streams)

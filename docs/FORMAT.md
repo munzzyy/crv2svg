@@ -24,7 +24,9 @@ MS-CFB). The streams seen:
 
 `MaterialSize` starts with a `u32` version (5, 7 or 8), then a `u8` that is 0 for inches and
 1 for millimetres, one more `u8`, and six `f64`: the minimum corner x, y, z and the
-maximum corner x, y, z.
+maximum corner x, y, z. This is where crv2svg takes the job size from. The vector stream
+ends with numbers that look like a job rectangle too, but in a quarter of the files read
+they are a placeholder or something else.
 
 ## Object stream
 
@@ -53,9 +55,7 @@ u32   1, or 2 from release 11
 u32   2, 3, 4 or 5 (grows with the release)
 u32   layer count
 layer objects (class vcCadLayer)
-u32   1
-f64   material x, y, width, height
-...   a vcCadSheet object and more, not read
+...   sheet records (vcCadSheet objects), not read
 ```
 
 ### vcCadLayer
@@ -101,13 +101,18 @@ object utParameterList, or null
 
 What follows depends on the version:
 
-- 5: `u32 0`.
-- 6: `u32 0`, `u32 1`, `f64 x`, `f64 y`.
+- 5: `u32 sheet`.
+- 6: `u32 sheet`, `u32 1`, `f64 x`, `f64 y`.
 - 7: the same, then `u32 0`.
-- 8: `u32 0`, `u32 1`, `f64 x`, `f64 y`, `label(1)`, id as text.
+- 8: `u32 sheet`, `u32 1`, `f64 x`, `f64 y`, `label(1)`, id as text.
 - 9: as 8, then `u32 1`, four `f64` (the object's box before it was transformed) and nine
   `f64` (a 3 x 3 transform, row by row, translation in the third column).
-- 10: as 9 without the leading `u32 0`, and with a second `label(1)` and id at the end.
+- 10: as 9 without the leading `u32 sheet`, and with a second `label(1)` and the sheet's id
+  as text at the end.
+
+`sheet` is the number of the sheet the object sits on, starting at 0. A job with several
+sheets keeps all of them in the same coordinates, so objects from different sheets
+overlap unless they are told apart by this field.
 
 The spans of a contour are stored after the transform has been applied. The box and
 matrix describe how the object got there, so a reader does not apply them again.
@@ -143,9 +148,11 @@ object vdContourGroup: u32 3, u32 count, vdContour objects
 u8[32] not understood, holds a tool diameter
 ```
 
-### vcCadBitmap
+### vcCadBitmap, vcCadModelPreview, vcActiveComponentPreview
 
-Release 9 and later (version 6):
+Pictures and 3D model previews. crv2svg steps over them and exports nothing from them.
+
+`vcCadBitmap`, release 9 and later (version 6):
 
 ```
 u32   6            version
@@ -158,9 +165,36 @@ u32   byte count
 bytes the image file, usually a PNG
 ```
 
-Earlier releases (version 5), and `vcCadModelPreview` and `vcActiveComponentPreview`,
-pack the image with LZMA and follow it with colour tables whose length is not known.
-crv2svg cannot step over those yet and stops.
+`vcCadModelPreview` version 6 starts the same way through the string, then:
+
+```
+u8[10] not understood
+u32   unpacked size
+u32   5, then five LZMA coder bytes
+u32   byte count, then the packed image
+u32   byte count, then a second block
+u32   2
+GUID
+```
+
+Up to release 8 both classes are version 5:
+
+```
+u32   5            version
+u8    0 for a bitmap, 1 for a model preview
+object vcCadContour, the outline
+u8[9] not understood
+u32   unpacked size
+u32   5, then five LZMA coder bytes
+u32   byte count, then the packed image
+u8[1024] a 256-colour table
+u8[8] not understood
+str   where it was imported from
+u8[5] not understood
+u32 and a GUID (model preview only)
+```
+
+`vcActiveComponentPreview` is the header and one `u32`.
 
 ### vcCadLinearDimensioningObject
 
@@ -178,7 +212,7 @@ u32   2            style version
 ```
 u32   version: 3, 4, 6 or 7 (see the table above)
 i32   not understood (-1 on drawn vectors)
-f64   tolerance
+f64   tolerance: how close two ends are for the contour to count as joined
 u8    flag
 f64   z
 u8    flag
@@ -216,7 +250,8 @@ positive when the arc runs counter-clockwise from start to end. A bulge of 1 is 
 circle, and a full circle is stored as two of them. Tab spans only turn up in toolpath
 previews, where the cutter lifts over a holding tab.
 
-A contour is closed when its last span ends where its first one starts.
+A contour is closed when its last span ends within the tolerance of where its first one
+starts.
 
 ## Text
 
@@ -262,14 +297,15 @@ sits: lay the glyphs out from the pen, shift them so the leftmost ink lands on t
 line's start, then apply the block's transform. This was checked on real files, where the
 laid-out ink width matches the base line length to four decimals.
 
-In block version 4 the base line is about a tenth longer than the ink and that rule does
-not hold. crv2svg reads those blocks but leaves their text out. It also leaves out text
-with more than one line and text on a curve, because the line spacing and the curve
+In block version 4 the base line is 1.1 times the ink width (exactly, in 355 of 431 blocks
+measured; the rest differ in the third decimal). Which end the extra tenth sits on is not
+known. crv2svg leaves that text out unless asked to estimate, and then centres the ink on
+the line, which can be wrong by up to a twentieth of the text's width. It also leaves out
+text with more than one line and text on a curve, because the line spacing and the curve
 mapping have not been worked out.
 
 ## What has not been seen
 
-Two-sided jobs, multiple sheets, arc and angular dimensions, and anything written by
-release 12. crv2svg stops with a named error when it meets a class or version it has no
+Two-sided jobs, arc and angular dimensions, and anything written by release 12. crv2svg stops with a named error when it meets a class or version it has no
 layout for, because nothing in the stream says how long an unknown record is, so it
 cannot be skipped safely.

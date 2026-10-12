@@ -60,7 +60,7 @@ def test_objects_after_a_point_span_stay_aligned():
     assert len(doc.layers[0].items[1].paths[0].spans) == 4
 
 
-def test_many_objects_use_wide_class_tags():
+def test_seventeen_thousand_objects_in_one_layer():
     items = [{"kind": "contour", "spans": [line((i, 0), (i, 1))]} for i in range(17000)]
     doc = crv2svg.read_bytes(build_crv([{"name": "big", "items": items}]))
     assert len(doc.layers[0].items) == 17000

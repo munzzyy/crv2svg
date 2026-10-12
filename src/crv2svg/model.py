@@ -2,7 +2,8 @@ import math
 from dataclasses import dataclass, field
 
 JOIN_TOLERANCE = 1e-6
-MAX_CURVE_STEPS = 256
+# Only a guard against runaway input: 16384 chords hold 0.0005 across a curve 180000 wide.
+MAX_CURVE_STEPS = 16384
 MIN_BULGE = 1e-9
 
 
@@ -36,12 +37,13 @@ class Span:
 @dataclass
 class Path:
     spans: list = field(default_factory=list)
+    tolerance: float = JOIN_TOLERANCE
 
     def runs(self):
         """Split into continuous runs; a run is a list of spans joined end to start."""
         out, run = [], []
         for span in self.spans:
-            if run and not _same(run[-1].end, span.start):
+            if run and not _same(run[-1].end, span.start, self.tolerance):
                 out.append(run)
                 run = []
             run.append(span)
@@ -50,13 +52,13 @@ class Path:
         return out
 
 
-def run_is_closed(run):
-    return (len(run) > 0 and _same(run[-1].end, run[0].start)
+def run_is_closed(run, tolerance=JOIN_TOLERANCE):
+    return (len(run) > 0 and _same(run[-1].end, run[0].start, tolerance)
             and (len(run) > 1 or run[0].is_arc or run[0].is_curve))
 
 
-def _same(a, b):
-    return abs(a[0] - b[0]) <= JOIN_TOLERANCE and abs(a[1] - b[1]) <= JOIN_TOLERANCE
+def _same(a, b, tolerance=JOIN_TOLERANCE):
+    return abs(a[0] - b[0]) <= tolerance and abs(a[1] - b[1]) <= tolerance
 
 
 @dataclass
@@ -64,6 +66,7 @@ class Item:
     kind: str
     paths: list = field(default_factory=list)
     tabs: int = 0
+    sheet: object = 0
     parts: list = field(default_factory=list)
 
 
@@ -74,9 +77,10 @@ class Layer:
     items: list = field(default_factory=list)
     is_preview: bool = False
 
-    def paths(self):
+    def paths(self, sheet=None):
         for item in self.items:
-            yield from item.paths
+            if sheet is None or item.sheet == sheet:
+                yield from item.paths
 
 
 @dataclass
@@ -92,11 +96,22 @@ class Document:
     def drawing_layers(self, include_previews=False):
         return [l for l in self.layers if include_previews or not l.is_preview]
 
-    def bounds(self, include_previews=False):
+    @property
+    def sheets(self):
+        """The sheets that hold drawn objects, in order. A plain job has one."""
+        seen = []
+        for layer in self.drawing_layers():
+            for item in layer.items:
+                if item.paths and item.sheet not in seen:
+                    seen.append(item.sheet)
+        numbered = sorted(s for s in seen if isinstance(s, int))
+        return numbered + [s for s in seen if not isinstance(s, int)] or [0]
+
+    def bounds(self, include_previews=False, sheet=None):
         """(min_x, min_y, max_x, max_y) of the geometry, or None when there is none."""
         box = None
         for layer in self.drawing_layers(include_previews):
-            for path in layer.paths():
+            for path in layer.paths(sheet):
                 for span in path.spans:
                     for x, y in _span_extent(span):
                         if not (math.isfinite(x) and math.isfinite(y)):
@@ -108,11 +123,11 @@ class Document:
                             box[2], box[3] = max(box[2], x), max(box[3], y)
         return tuple(box) if box else None
 
-    def page(self, include_previews=False):
+    def page(self, include_previews=False, sheet=None):
         """Rectangle to draw on: the material when the geometry fits in it, else the geometry."""
-        box = self.bounds(include_previews)
+        box = self.bounds(include_previews, sheet)
         mat = self.material
-        if mat and mat[2] > 0 and mat[3] > 0:
+        if mat and all(math.isfinite(v) for v in mat) and mat[2] > 0 and mat[3] > 0:
             rect = (mat[0], mat[1], mat[0] + mat[2], mat[1] + mat[3])
             slack = 1e-6 * max(mat[2], mat[3])
             if box is None or (box[0] >= rect[0] - slack and box[1] >= rect[1] - slack

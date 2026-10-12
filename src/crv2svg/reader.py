@@ -17,26 +17,31 @@ COORD_LIMIT = 1e9
 # Parameter value types: a double, a 32-bit integer, a one-byte flag.
 PARAM_SIZE = {0: 8, 1: 4, 2: 1}
 PARAM_STRING = 3
+MAX_NESTING = 64
+DEFAULT_JOIN = 1e-6
+MAX_JOIN = 0.01
 BULGE_LIMIT = 1e6
 
 
-def read_file(path):
+def read_file(path, approximate_text=False):
     with open(path, "rb") as handle:
-        return read_bytes(handle.read())
+        return read_bytes(handle.read(), approximate_text)
 
 
-def read_bytes(data):
+def read_bytes(data, approximate_text=False):
+    """approximate_text also places text from releases before 9, whose position is an estimate."""
     streams = cfb.read_streams(data)
     doc = Document()
     doc.product, doc.version = _version(streams.get("VersionData/Version", b""))
     doc.preview_gif = streams.get("PreviewData/Preview2D_GIF", b"")
-    doc.units = _units(streams.get("VectorData/MaterialSize", b""))
+    doc.units, doc.material = _material(streams.get("VectorData/MaterialSize", b""))
     if VECTOR_STREAM not in streams:
         names = ", ".join(sorted(streams)) or "none"
         raise UnsupportedError(
             "no %s stream in this file (found: %s). It may come from a Vectric "
             "release this reader has not seen." % (VECTOR_STREAM, names))
     ar = Archive(streams[VECTOR_STREAM])
+    ar.approximate_text = approximate_text
     doc.warnings = ar.warnings
     try:
         _read_vectors(ar, doc)
@@ -51,12 +56,12 @@ def read_bytes(data):
 def _version(raw):
     """The version stream is a run of UTF-16 strings: product, version, build date, owner."""
     parts, pos = [], 4
-    while pos + 4 <= len(raw) and len(parts) < 2:
-        if raw[pos:pos + 3] != b"\xff\xfe\xff":
-            break
+    while len(parts) < 2 and raw[pos:pos + 3] == b"\xff\xfe\xff" and pos + 4 <= len(raw):
         n = raw[pos + 3]
         pos += 4
         if n == 0xFF:
+            if pos + 2 > len(raw):
+                break
             n, = struct.unpack_from("<H", raw, pos)
             pos += 2
         parts.append(raw[pos:pos + 2 * n].decode("utf-16-le", "replace").strip())
@@ -65,11 +70,15 @@ def _version(raw):
     return parts[0], parts[1]
 
 
-def _units(raw):
-    """Byte 4 of the material stream is 0 for inches and 1 for millimetres."""
-    if len(raw) < 6 or struct.unpack_from("<I", raw, 0)[0] not in (5, 7, 8):
-        return None
-    return {0: "in", 1: "mm"}.get(raw[4])
+def _material(raw):
+    """Units and job rectangle. Byte 4 is 0 for inches and 1 for millimetres."""
+    if len(raw) < 54 or struct.unpack_from("<I", raw, 0)[0] not in (5, 7, 8):
+        return None, None
+    units = {0: "in", 1: "mm"}.get(raw[4])
+    x0, y0, _, x1, y1, _ = struct.unpack_from("<6d", raw, 6)
+    if not all(abs(v) < COORD_LIMIT for v in (x0, y0, x1, y1)) or x1 <= x0 or y1 <= y0:
+        return units, None
+    return units, (x0, y0, x1 - x0, y1 - y0)
 
 
 def _read_vectors(ar, doc):
@@ -80,9 +89,6 @@ def _read_vectors(ar, doc):
         if name != "vcCadLayer":
             raise UnsupportedError("expected a layer, found %r (offset %d)" % (name, ar.pos))
         doc.layers.append(_layer(ar, doc))
-    if len(ar.data) - ar.pos >= 36:
-        ar.u32()
-        doc.material = (ar.f64(), ar.f64(), ar.f64(), ar.f64())
 
 
 def _layer(ar, doc):
@@ -101,7 +107,15 @@ def _layer(ar, doc):
     return layer
 
 
-def _item(ar):
+def _item(ar, depth=0):
+    item = _item_body(ar, depth)
+    item.sheet = ar.sheets.pop()
+    return item
+
+
+def _item_body(ar, depth):
+    if depth > MAX_NESTING:
+        raise UnsupportedError("objects are nested more than %d deep (offset %d)" % (MAX_NESTING, ar.pos))
     name = ar.object_header()
     if name == "vcCadContour":
         _item_base(ar)
@@ -131,7 +145,7 @@ def _item(ar):
         ar.expect_u32((1,), "object group")
         group = Item("group")
         for _ in range(ar.count("grouped object", each=2)):
-            group.paths.extend(_item(ar).paths)
+            group.paths.extend(_item(ar, depth + 1).paths)
         return group
     if name == "txtBlock":
         return _text_block(ar)
@@ -141,7 +155,7 @@ def _item(ar):
         ar.raw(5)
         dimension = Item("dimension")
         for _ in range(ar.count("dimension part", each=2)):
-            part = _item(ar)
+            part = _item(ar, depth + 1)
             dimension.paths.extend(part.paths)
             dimension.parts.append(part)
         # Fonts, sizes, the dimension layer name, then five anchor points.
@@ -154,23 +168,54 @@ def _item(ar):
         ar.string()
         ar.raw(1 + 4 + 10 * 8)
         return dimension
-    if name in ("vcCadBitmap", "vcCadModelPreview", "vcActiveComponentPreview"):
+    if name == "vcActiveComponentPreview":
         _item_base(ar)
-        # Older releases pack the image with LZMA and follow it with tables of unknown length.
-        if name != "vcCadBitmap" or ar.u32() != 6:
+        ar.raw(4)
+        return Item("picture")
+    if name in ("vcCadBitmap", "vcCadModelPreview"):
+        header = _item_base_version(ar)
+        version = ar.u32()
+        if version == 6:
+            ar.raw(11 * 8)
+            _item(ar, depth + 1)
+            ar.raw(4)
+            ar.string()
+            if name == "vcCadBitmap":
+                ar.raw(2 + 4)
+                ar.raw(ar.count("image data"))
+            else:
+                # Packed pixels, then a second plain block, then an id.
+                ar.raw(2 + 4 + 4 + 4)
+                ar.raw(ar.count("coder settings"))
+                ar.raw(ar.count("image data"))
+                ar.raw(ar.count("image data"))
+                ar.raw(4 + 16)
+        elif version == 5 and header <= 7:
+            # Outline, LZMA-packed pixels, a 256-colour table, then where it was imported from.
+            ar.raw(1)
+            _item(ar, depth + 1)
+            ar.raw(1 + 4 + 4 + 4)
+            ar.raw(ar.count("coder settings"))
+            ar.raw(ar.count("image data"))
+            ar.raw(1024 + 4 + 4)
+            ar.string()
+            ar.raw(4 + 1)
+            if name == "vcCadModelPreview":
+                ar.raw(4 + 16)
+        else:
             raise UnsupportedError(
                 "this file embeds a picture or 3D model preview in a layout this reader "
                 "cannot step over yet (offset %d)" % ar.pos)
-        ar.raw(11 * 8)
-        _item(ar)
-        ar.raw(4)
-        ar.string()
-        ar.raw(2 + 4)
-        ar.raw(ar.count("image data"))
         return Item("picture")
     raise UnsupportedError(
         "this file has a %r object, which this reader cannot decode yet (offset %d)"
         % (name, ar.pos))
+
+
+def _finite(ar, value):
+    if not abs(value) < COORD_LIMIT:
+        raise CrvError("text record has a value that is not a usable number (offset %d)" % ar.pos)
+    return value
 
 
 def _text_block(ar):
@@ -193,13 +238,13 @@ def _text_block(ar):
                 char_version = ar.expect_u32((3, 4), "character")
                 ar.u32()
                 ar.string()
-                advance = ar.f64()
+                advance = _finite(ar, ar.f64())
                 if ar.object_header() != "vdContourGroup":
                     raise UnsupportedError("character without outlines (offset %d)" % ar.pos)
                 ar.expect_u32((3,), "contour group")
                 outlines = [_contour_object(ar) for _ in range(ar.count("contour", each=2))]
                 ar.raw(4 + 13)
-                metrics = [ar.f64() for _ in range(8 if char_version >= 4 else 7)]
+                metrics = [_finite(ar, ar.f64()) for _ in range(8 if char_version >= 4 else 7)]
                 glyphs.append((advance, outlines, metrics))
         ar.raw(8)
         ar.string()
@@ -215,20 +260,37 @@ def _text_block(ar):
         raise UnsupportedError("text block carries a %r record (offset %d)" % (name, ar.pos))
     ar.raw(9)
     # The block's own transform, then its inverse.
-    matrix = [ar.f64() for _ in range(9)]
+    matrix = [_finite(ar, ar.f64()) for _ in range(9)]
     ar.raw(9 * 8 + (16 if block_version >= 6 else 8))
     item = Item("text")
     if block_version >= 6:
         item.paths, problem = text.layout(matrix, lines, base)
+    elif ar.approximate_text:
+        item.paths, problem = text.layout(matrix, lines, base, padded=True)
+        if not problem and item.paths:
+            ar.warnings.append("placed text from a release before version 9 by estimate, "
+                               "check where it sits before cutting")
     else:
-        # Older releases relate the base line to the glyphs differently; not worked out yet.
+        # Older releases pad the base line and it is not known on which side.
         problem = "text saved by a release before version 9"
     if problem:
         ar.warnings.append("left out %s, which this reader cannot place yet" % problem)
     return item
 
 
+def _item_base_version(ar):
+    start = ar.pos
+    _item_base(ar)
+    return struct.unpack_from("<I", ar.data, start)[0]
+
+
 def _item_base(ar):
+    matrix = _item_header(ar)
+    ar.sheets.append(ar.sheet)
+    return matrix
+
+
+def _item_header(ar):
     version = ar.expect_u32((5, 6, 7, 8, 9, 10), "drawing object")
     ar.raw(16 + 16 + 20)
     if ar.i32() != -1:
@@ -250,10 +312,11 @@ def _item_base(ar):
                 raise UnsupportedError("parameter of type %d (offset %d)" % (kind, ar.pos))
     elif name is not None:
         raise UnsupportedError("drawing object carries a %r record (offset %d)" % (name, ar.pos))
+    # Up to release 10 an object names its sheet by number, after that by id.
+    ar.sheet = ar.u32() if version < 10 else None
     if version == 5:
-        ar.raw(4)
         return None
-    ar.raw((4 if version >= 10 else 8) + 8 + 8)
+    ar.raw(4 + 8 + 8)
     if version <= 7:
         ar.raw(4 if version == 7 else 0)
         return None
@@ -271,7 +334,7 @@ def _item_base(ar):
         raise UnsupportedError("drawing object transform flag %d (offset %d)" % (has_transform, ar.pos))
     if version >= 10:
         _tagged_version(ar, (1,))
-        ar.raw(ar.count("sheet id text"))
+        ar.sheet = ar.raw(ar.count("sheet id text")).decode("ascii", "replace")
     return matrix
 
 
@@ -303,8 +366,13 @@ def _contour_object(ar):
     if name != "vdContour":
         raise UnsupportedError("expected contour geometry, found %r (offset %d)" % (name, ar.pos))
     version = ar.expect_u32((3, 4, 6, 7), "contour")
-    ar.raw(4 + 8 + 1 + 8 + 1)
+    ar.raw(4)
+    tolerance = ar.f64()
+    ar.raw(1 + 8 + 1)
     path = Path()
+    # The contour says how close two ends must be to count as joined.
+    if DEFAULT_JOIN < tolerance <= MAX_JOIN:
+        path.tolerance = tolerance
     for _ in range(ar.count("span", each=50)):
         if version >= 6:
             kind = ar.u8()

@@ -85,3 +85,15 @@ def test_old_pictures_stop_with_a_plain_message():
     with pytest.raises(UnsupportedError) as info:
         crv2svg.read_bytes(build_cfb({"VectorData/2dDataV2": bytes(data), "VersionData/Version": build_version()}))
     assert info.value.partial is not None and len(info.value.partial.layers) == 1
+
+
+@pytest.mark.parametrize("base", (5, 6))
+def test_old_text_can_be_placed_by_estimate_on_request(base):
+    wide = dict(TEXT, base=[line((10, 5), (15.5, 5))])
+    data = build_crv([{"name": "t", "items": [wide]}], base=base)
+    assert crv2svg.read_bytes(data).layers[0].items[0].paths == []
+    doc = crv2svg.read_bytes(data, approximate_text=True)
+    xs = sorted({round(s.start[0], 6) for p in doc.layers[0].items[0].paths for s in p.spans})
+    # Ink is 4.5 wide on a base line 5.5 long, so it sits half a unit in from each end.
+    assert xs == [10.5, 12.5, 13.0, 15.0]
+    assert "by estimate" in doc.warnings[0]

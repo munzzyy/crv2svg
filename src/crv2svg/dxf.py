@@ -3,19 +3,19 @@
 import re
 
 from .model import flatten_curve, run_is_closed
-from .numfmt import fmt
+from .numfmt import fmt, unique_name
 
 ACI = {1: (255, 0, 0), 2: (255, 255, 0), 3: (0, 255, 0), 4: (0, 255, 255),
        5: (0, 0, 255), 6: (255, 0, 255), 7: (0, 0, 0)}
 
 
-def to_dxf(doc, include_previews=False, layers=None, curve_tolerance=None):
+def to_dxf(doc, include_previews=False, layers=None, curve_tolerance=None, sheet=None):
     """curve_tolerance is how far a flattened Bezier may stray, in drawing units."""
     if curve_tolerance is None:
         curve_tolerance = 0.01 if doc.units == "mm" else 0.0005
     chosen = [l for l in doc.drawing_layers(include_previews)
               if layers is None or l.name in layers]
-    names, used = {}, set()
+    names, used = {}, {}
     for index, layer in enumerate(chosen):
         names[index] = _layer_name(layer.name, used)
     out = []
@@ -37,9 +37,9 @@ def to_dxf(doc, include_previews=False, layers=None, curve_tolerance=None):
     emit(0, "ENDTAB"); emit(0, "ENDSEC")
     emit(0, "SECTION"); emit(2, "ENTITIES")
     for index, layer in enumerate(chosen):
-        for path in layer.paths():
+        for path in layer.paths(sheet):
             for run in path.runs():
-                closed = run_is_closed(run)
+                closed = run_is_closed(run, path.tolerance)
                 emit(0, "POLYLINE"); emit(8, names[index]); emit(66, 1)
                 emit(10, "0.0"); emit(20, "0.0"); emit(30, "0.0")
                 emit(70, 1 if closed else 0)
@@ -69,15 +69,12 @@ def _num(value):
 
 
 def _aci(color):
-    best = min(ACI, key=lambda k: sum((a - b) ** 2 for a, b in zip(ACI[k], color)))
-    return best
+    # Neutral colours are nearer to yellow than to black in RGB, so they are picked by hand.
+    if max(color) - min(color) < 40:
+        return 8 if 70 <= max(color) <= 200 else 7
+    return min(ACI, key=lambda k: sum((a - b) ** 2 for a, b in zip(ACI[k], color)))
 
 
 def _layer_name(name, used):
     base = re.sub(r"[^A-Za-z0-9_$-]+", "_", name).strip("_")[:28] or "LAYER"
-    candidate, n = base, 2
-    while candidate.upper() in used:
-        candidate = "%s_%d" % (base, n)
-        n += 1
-    used.add(candidate.upper())
-    return candidate
+    return unique_name(base, used, str.upper)

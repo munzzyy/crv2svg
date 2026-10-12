@@ -28,6 +28,8 @@ crv2svg *.crv -f dxf              # a whole folder
 crv2svg sign.crv --info           # what is in the file
 crv2svg sign.crv --layer "Cut out" --layer Pockets
 crv2svg sign.crv --extract-preview thumb.gif
+crv2svg parts.crv                 # a job with 3 sheets writes parts-sheet1.svg to parts-sheet3.svg
+crv2svg parts.crv --sheet 2 -o second.dxf
 ```
 
 `--info` prints the release that wrote the file, the job size and units, and each layer:
@@ -51,6 +53,20 @@ open("sign.svg", "w").write(crv2svg.to_svg(doc))
 open("sign.dxf", "w").write(crv2svg.to_dxf(doc))
 ```
 
+## In the browser
+
+`web/index.html` does the same job in a page, for people who will not install Python. Open
+it in a browser, or serve the folder with `python3 -m http.server --directory web`. Drop
+one or more `.crv` files on it, pick the layers, and download SVG or DXF. To get one
+self-contained file you can hand around, run `python3 web/build.py`, which writes
+`dist/crv2svg.html`.
+
+Nothing is uploaded. The conversion runs in the page, and the page's security policy
+forbids any network request. `web/crv2svg.js` is the same reader and writers rewritten in
+JavaScript with no dependencies. `tests/test_web_parity.py` runs both engines over the same
+files and fails unless the SVG, the DXF and the error messages are identical, byte for
+byte. It needs Node and skips itself without it.
+
 ## What you get
 
 - Lines, arcs and Bezier curves, on their original layers with the layer colours.
@@ -60,38 +76,42 @@ open("sign.dxf", "w").write(crv2svg.to_dxf(doc))
   CAM program sees a true radius and not a string of short lines.
 - DXF is the plain R12 flavour that nearly everything opens. It has no Bezier entity, so
   curves are flattened there to within 0.0005 in or 0.01 mm.
+- A job with several sheets gives one file per sheet. Vectric keeps every sheet in the
+  same coordinates, so one file for all of them would be a pile of overlapping parts.
+- Shapes that Vectric treats as closed come out closed.
 - Grouped objects come out as their parts. Dimension lines come out as drawn.
 - Toolpath previews are left out unless you pass `--include-previews`.
 
 ## What it reads
 
 Tested on 156 project files that people have published, saved by Aspire, VCarve Pro,
-VCarve Desktop, Cut2D and PartWorks releases from 6.0 (2010) to 11.5 (2023). 144 of them
+VCarve Desktop, Cut2D and PartWorks releases from 6.0 (2010) to 11.5 (2023). All 156
 convert. Checks behind that:
 
-- Vectric stores a thumbnail of the job in each file. For one file from each of four
-  releases, the SVG was laid beside that thumbnail and matched it, text included.
+- Vectric stores a thumbnail of the job in each file. For files from four releases, the
+  SVG was laid beside that thumbnail and matched it, text included.
 - Where a repository holds Vectric's own DXF export beside the project, every point
   crv2svg reads is in that DXF to three decimals. The largest such file has 34,277.
 
 ## What it does not do
 
 - Toolpaths, tools, feeds and 3D models. This is the drawing only.
-- Text saved by releases before 9 is read but left out of the output, because how those
-  releases place letters along the line has not been worked out. So is text with more
-  than one line and text on a curve. crv2svg says so when it happens. Text converted to
-  curves inside Vectric is ordinary vectors and comes through.
-- Files from release 8 and earlier that hold an imported picture or a 3D model preview
-  stop with an error. `--partial` keeps the layers read up to that point. This is the 12
-  files of the 156.
+- Text saved by releases before 9 is left out by default. Those releases store letters
+  along a line that is a tenth longer than the text, and which end the slack sits on is
+  not known. `--approximate-text` puts the text in the middle of that line, which can be
+  off by up to a twentieth of the text's width. Check it against the original before
+  cutting. Text converted to curves inside Vectric is ordinary vectors and is exact.
+- Text with more than one line and text on a curve are left out. crv2svg says so when it
+  happens.
 - Embedded pictures are not exported.
 - Release 12 has not been tested. If a file fails, the message names the record that
   stopped it. Please open an issue with that message, and the file if you can share it.
 - It does not write `.crv` files.
 
-A file it cannot fully read fails loudly instead of writing a drawing with pieces
-missing. Exit status is 0 when everything converted, 2 for a `--partial` result and 1
-when a file could not be read.
+A record it has no layout for stops the file with an error that names it, instead of
+writing a drawing with pieces missing. `--partial` keeps the layers read before that
+point. Exit status is 0 when everything converted, 1 when any file could not be read, and
+2 when the worst that happened was a `--partial` result.
 
 ## The format
 

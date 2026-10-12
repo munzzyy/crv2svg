@@ -17,6 +17,9 @@ class Archive:
         # Slot 0 is the null object; classes and objects share one index space.
         self.table = [None]
         self.warnings = []
+        self.approximate_text = False
+        self.sheet = None
+        self.sheets = []
 
     def _take(self, fmt, size):
         if self.pos + size > len(self.data):
