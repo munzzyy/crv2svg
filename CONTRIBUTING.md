@@ -31,7 +31,8 @@ rewritten by hand, and `tests/test_web_parity.py` runs both over the same files 
 unless every SVG, DXF, warning and error message is identical, byte for byte. A change to
 a layout, a limit or a message in one has to land in the other in the same commit. The
 parity tests need Node, and the page tests need Chromium. Both skip themselves when the
-program is missing.
+program is missing, and the page tests also skip on CI, so run them on your own machine
+before sending a change to `web/`.
 
 ## What a patch needs
 

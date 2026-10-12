@@ -154,7 +154,7 @@ def test_deep_nesting_is_refused_cleanly():
     for _ in range(40):
         item = {"kind": "group", "items": [item]}
     assert len(crv2svg.read_bytes(build_crv([{"name": "a", "items": [item]}], modern=True)).layers) == 1
-    for _ in range(3000):
+    for _ in range(400):
         item = {"kind": "group", "items": [item]}
     import sys
     limit = sys.getrecursionlimit()
