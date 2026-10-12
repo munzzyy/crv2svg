@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crv2svg"
+version = "0.1.0"
+description = "Convert the 2D vectors in Vectric .crv project files to SVG or DXF"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "GPL-3.0-or-later"
+authors = [{ name = "Cole Munz", email = "Munzzyy1@proton.me" }]
+keywords = ["cnc", "vectric", "vcarve", "crv", "svg", "dxf", "converter"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+]
+
+[project.urls]
+Homepage = "https://github.com/munzzyy/crv2svg"
+
+[project.scripts]
+crv2svg = "crv2svg.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
