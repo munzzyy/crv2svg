@@ -2,7 +2,8 @@
 
 import re
 
-from .model import flatten_curve, run_is_closed
+from .errors import CrvError
+from .model import MAX_OUTPUT, flatten_curve, run_is_closed
 from .numfmt import fmt, unique_name
 
 ACI = {1: (255, 0, 0), 2: (255, 255, 0), 3: (0, 255, 0), 4: (0, 255, 255),
@@ -19,10 +20,16 @@ def to_dxf(doc, include_previews=False, layers=None, curve_tolerance=None, sheet
     for index, layer in enumerate(chosen):
         names[index] = _layer_name(layer.name, used)
     out = []
+    size = 0
 
     def emit(code, value):
+        nonlocal size
+        value = str(value)
+        size += len(value) + 5
+        if size > MAX_OUTPUT:
+            raise CrvError("this drawing is too large to save")
         out.append("%3d" % code)
-        out.append(str(value))
+        out.append(value)
 
     emit(0, "SECTION"); emit(2, "HEADER")
     emit(9, "$ACADVER"); emit(1, "AC1009")

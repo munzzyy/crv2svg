@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 JOIN_TOLERANCE = 1e-6
 # Only a guard against runaway input: 16384 chords hold 0.0005 across a curve 180000 wide.
 MAX_CURVE_STEPS = 16384
+MAX_OUTPUT = 100 * 1024 * 1024
 MIN_BULGE = 1e-9
 
 

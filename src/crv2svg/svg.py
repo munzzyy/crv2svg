@@ -4,7 +4,8 @@ import math
 import re
 from xml.sax.saxutils import escape, quoteattr
 
-from .model import run_is_closed
+from .errors import CrvError
+from .model import MAX_OUTPUT, run_is_closed
 from .numfmt import fmt, unique_name
 
 UNIT_SUFFIX = {"in": "in", "mm": "mm"}
@@ -24,6 +25,7 @@ def to_svg(doc, units=None, include_previews=False, layers=None, sheet=None):
         % (_num(width), suffix, _num(height), suffix, _num(width), _num(height)),
     ]
     used = {}
+    size = 0
     for layer in doc.drawing_layers(include_previews):
         if layers is not None and layer.name not in layers:
             continue
@@ -35,6 +37,9 @@ def to_svg(doc, units=None, include_previews=False, layers=None, sheet=None):
         out.append("<title>%s</title>" % escape(_clean(layer.name)))
         for path in layer.paths(sheet):
             d = _path_data(path, x0, y1)
+            size += len(d)
+            if size > MAX_OUTPUT:
+                raise CrvError("this drawing is too large to save")
             if d:
                 out.append('<path vector-effect="non-scaling-stroke" d="%s"/>' % d)
         out.append("</g>")

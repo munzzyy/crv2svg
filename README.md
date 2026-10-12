@@ -1,15 +1,31 @@
 # crv2svg
 
-Convert the 2D vectors in a Vectric project file (`.crv`, `.crv3d`) to SVG or DXF, without
-owning the software that wrote it.
+**Open a Vectric project file (`.crv`, `.crv3d`) without Vectric, and save the drawing as SVG or DXF.**
+
+[![CI](https://github.com/munzzyy/crv2svg/actions/workflows/ci.yml/badge.svg)](https://github.com/munzzyy/crv2svg/actions/workflows/ci.yml)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+![zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen)
+
+<p align="center">
+  <a href="https://crv2svg.munzzyy.dev/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/media/page-dark.png">
+      <img src="docs/media/page-light.png" alt="The crv2svg page with a three-sheet cabinet job open: a preview of sheet 2, Download SVG and Download DXF buttons, the material size and the layer list" width="760">
+    </picture>
+  </a>
+</p>
+
+**https://crv2svg.munzzyy.dev/** does it in the browser. Drop a file on the page, look at
+the preview, press Download. Nothing is uploaded: the page converts the file on your own
+computer and is not allowed to make a network request. There is a command-line tool and a
+Python library below for doing a whole folder at once.
 
 VCarve, Aspire and Cut2D save designs in their own format, and the only way to get the
-drawing back out has been to open the file in a licensed copy and export it. People on
-other CAM software who are handed a `.crv`, or who let a licence lapse, are stuck. crv2svg
-reads the file directly.
-
-It is a small Python package with no dependencies. It only reads files. It never runs or
-needs any Vectric software.
+drawing back out has been to open the file in a licensed copy and export it. If someone
+hands you a `.crv` and you run other CAM software, or your licence lapsed, you are stuck.
+I could not find a free tool that reads these files, so I worked out the format from
+published project files and wrote one. It only reads. It never runs or needs any Vectric
+software.
 
 ## Install
 
@@ -17,7 +33,7 @@ needs any Vectric software.
 pip install git+https://github.com/munzzyy/crv2svg
 ```
 
-Python 3.9 or newer.
+Python 3.9 or newer, and no other packages.
 
 ## Use
 
@@ -55,17 +71,31 @@ open("sign.dxf", "w").write(crv2svg.to_dxf(doc))
 
 ## In the browser
 
-`web/index.html` does the same job in a page, for people who will not install Python. Open
-it in a browser, or serve the folder with `python3 -m http.server --directory web`. Drop
-one or more `.crv` files on it, pick the layers, and download SVG or DXF. To get one
-self-contained file you can hand around, run `python3 web/build.py`, which writes
-`dist/crv2svg.html`.
+The page at https://crv2svg.munzzyy.dev/ is `web/index.html` from this repository. Drop
+one or more `.crv` files anywhere on it, or choose them. Each file gets a preview you can
+pan and zoom, its size in plain words, and Download SVG and Download DXF buttons. Layers can
+be switched off before you save, and toolpath previews stay out until you switch them on.
+A job with several sheets gets a tab for each, and a ZIP with one file per sheet. If a file
+was saved by a release before 9, the page says its text was left out and offers to place it
+by estimate, with the same warning as `--approximate-text`. A file that fails says in plain
+words what stopped it, and lets you keep whatever was read before that point. A file that
+is mostly 3D model or picture data says so, because the page reads only the 2D vectors.
+The units menu only changes the label on the saved size, it never converts the drawing, and
+the page says so when you change it. A drawing whose SVG or DXF would run past 100 million
+characters is refused with a message, by the page and by the command line alike, instead
+of running out of memory. The largest of the 156 real files comes to 11 million.
 
-Nothing is uploaded. The conversion runs in the page, and the page's security policy
-forbids any network request. `web/crv2svg.js` is the same reader and writers rewritten in
-JavaScript with no dependencies. `tests/test_web_parity.py` runs both engines over the same
-files and fails unless the SVG, the DXF and the error messages are identical, byte for
-byte. It needs Node and skips itself without it.
+To get one self-contained file you can save and use offline, run `python3 web/build.py`,
+which writes `dist/crv2svg.html`. You can also serve the folder with
+`python3 -m http.server --directory web`.
+
+Nothing is uploaded. The conversion runs in the page, in a background worker, and the
+page's security policy forbids any network request. `web/crv2svg.js` is the same reader
+and writers rewritten in JavaScript with no dependencies. `tests/test_web_parity.py` runs
+both engines over the same files and fails unless the SVG, the DXF, the warnings, the sheet
+list and the error messages are identical, byte for byte. It needs Node and skips itself
+without it. The same file also drives the page in headless Chromium and checks what a person
+would see, and it skips that part when no Chromium is installed.
 
 ## What you get
 

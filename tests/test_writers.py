@@ -168,3 +168,15 @@ def test_nearly_straight_arc_and_huge_numbers_do_not_break_formatting():
     doc = doc_of([{"name": "a", "items": [{"kind": "polyline", "spans": spans}]}])
     d = paths(crv2svg.to_svg(doc))[0]
     assert d.startswith("M0 12 L10 12 A") and crv2svg.to_dxf(doc).endswith("EOF\n")
+
+
+@pytest.mark.parametrize("writer", ["svg", "dxf"])
+def test_output_past_the_size_limit_is_refused(monkeypatch, writer):
+    doc = crv2svg.read_bytes(build_crv([{"name": "a", "items": [
+        {"kind": "contour", "spans": square(0, 0, 10)}]}]))
+    module = getattr(crv2svg, writer)
+    write = getattr(crv2svg, "to_" + writer)
+    assert write(doc)
+    monkeypatch.setattr(module, "MAX_OUTPUT", 20)
+    with pytest.raises(crv2svg.CrvError, match="^this drawing is too large to save$"):
+        write(doc)
