@@ -1,6 +1,8 @@
 import math
 from dataclasses import dataclass, field
 
+from .numfmt import hypot
+
 JOIN_TOLERANCE = 1e-6
 # Only a guard against runaway input: 16384 chords hold 0.0005 across a curve 180000 wide.
 MAX_CURVE_STEPS = 16384
@@ -31,7 +33,7 @@ class Span:
 
     @property
     def radius(self):
-        chord = math.hypot(self.end[0] - self.start[0], self.end[1] - self.start[1])
+        chord = hypot(self.end[0] - self.start[0], self.end[1] - self.start[1])
         return chord * (1 + self.bulge * self.bulge) / (4 * abs(self.bulge))
 
 
@@ -151,7 +153,7 @@ def _span_extent(span):
     if not span.is_arc or not math.isfinite(span.bulge):
         return pts
     b = span.bulge
-    chord = math.hypot(x2 - x1, y2 - y1)
+    chord = hypot(x2 - x1, y2 - y1)
     r = span.radius
     # Centre sits on the chord's left normal for a counter-clockwise arc.
     h = chord * (1 - b * b) / (4 * b)
@@ -171,8 +173,8 @@ def flatten_curve(span, tolerance):
     """Points along a Bezier span after its start, close enough that no chord strays past tolerance."""
     p0, (c1, c2), p3 = span.start[:2], span.control, span.end[:2]
     # Deviation from the chord is bounded by the second differences of the control polygon.
-    dd = max(math.hypot(p0[0] - 2 * c1[0] + c2[0], p0[1] - 2 * c1[1] + c2[1]),
-             math.hypot(c1[0] - 2 * c2[0] + p3[0], c1[1] - 2 * c2[1] + p3[1]))
+    dd = max(hypot(p0[0] - 2 * c1[0] + c2[0], p0[1] - 2 * c1[1] + c2[1]),
+             hypot(c1[0] - 2 * c2[0] + p3[0], c1[1] - 2 * c2[1] + p3[1]))
     steps = 1
     if tolerance > 0 and dd > 0:
         steps = max(1, min(MAX_CURVE_STEPS, math.ceil(math.sqrt(0.75 * dd / tolerance))))

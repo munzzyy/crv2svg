@@ -9,6 +9,7 @@ import math
 
 from .errors import CrvError
 from .model import Path, Span, _span_extent
+from .numfmt import hypot
 
 COORD_LIMIT = 1e9
 
@@ -26,7 +27,7 @@ def layout(matrix, lines, base, padded=False):
     if base is None or len(base.spans) != 1 or base.spans[0].is_arc or base.spans[0].is_curve:
         return [], "text on a curve"
     start, end = base.spans[0].start, base.spans[0].end
-    length = math.hypot(end[0] - start[0], end[1] - start[1])
+    length = hypot(end[0] - start[0], end[1] - start[1])
     if length <= 0:
         return [], "text with an empty base line"
     ux, uy = (end[0] - start[0]) / length, (end[1] - start[1]) / length
@@ -85,7 +86,7 @@ def arc_to_curves(span):
     """Cubic Beziers that follow an arc span, a quarter turn or less each."""
     x1, y1, x2, y2 = span.start[0], span.start[1], span.end[0], span.end[1]
     sweep = 4 * math.atan(span.bulge)
-    chord = math.hypot(x2 - x1, y2 - y1)
+    chord = hypot(x2 - x1, y2 - y1)
     h = chord * (1 - span.bulge * span.bulge) / (4 * span.bulge)
     cx = (x1 + x2) / 2 - h * (y2 - y1) / chord
     cy = (y1 + y2) / 2 + h * (x2 - x1) / chord

@@ -20,6 +20,14 @@ def fmt(value, digits):
     return "0" if text in ("-0", "") else text
 
 
+def hypot(x, y):
+    """math.hypot, correctly rounded. Before Python 3.10 the library one could be an ulp off."""
+    if not (math.isfinite(x) and math.isfinite(y)):
+        return math.hypot(x, y)
+    a, b = Decimal(x), Decimal(y)
+    return float(_CONTEXT.sqrt(_CONTEXT.add(_CONTEXT.multiply(a, a), _CONTEXT.multiply(b, b))))
+
+
 def unique_name(base, used, key):
     """base, or base_2, base_3 and so on. used maps each taken key to the next suffix to try."""
     candidate, n = base, used.get(key(base), 1)

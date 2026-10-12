@@ -25,7 +25,7 @@ def build():
         sys.exit("expected exactly one script element in the built page")
 
     OUT.parent.mkdir(exist_ok=True)
-    OUT.write_text(page, encoding="utf-8", newline="\n")
+    OUT.write_bytes(page.encode("utf-8"))
     print("%s (%d bytes, script sha256-%s)" % (OUT, OUT.stat().st_size, digest))
 
 

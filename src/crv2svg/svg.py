@@ -1,12 +1,11 @@
 """Write a Document as SVG. CRV has y pointing up, SVG down, so y is flipped on the page."""
 
-import math
 import re
 from xml.sax.saxutils import escape, quoteattr
 
 from .errors import CrvError
 from .model import MAX_OUTPUT, run_is_closed
-from .numfmt import fmt, unique_name
+from .numfmt import fmt, hypot, unique_name
 
 UNIT_SUFFIX = {"in": "in", "mm": "mm"}
 
@@ -62,7 +61,7 @@ def _path_data(path, x0, y_top):
                     _num(ax - x0), _num(y_top - ay), _num(bx - x0), _num(y_top - by), ex, ey))
             elif span.is_arc:
                 # Radius from the rounded end points, so the two halves of a circle still meet.
-                chord = math.hypot(float(ex) - float(sx), float(ey) - float(sy))
+                chord = hypot(float(ex) - float(sx), float(ey) - float(sy))
                 b2 = span.bulge * span.bulge
                 r = fmt(chord * (1 + b2) / (4 * abs(span.bulge)), 9) if chord else _num(span.radius)
                 parts.append("A%s %s 0 %d %d %s %s" % (

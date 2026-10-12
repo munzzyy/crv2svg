@@ -46,7 +46,9 @@ fs.rmSync(downloads, { recursive: true, force: true });
 fs.mkdirSync(downloads, { recursive: true });
 const proc = spawn(CHROMIUM, [
   "--headless=new", "--remote-debugging-port=" + port, "--user-data-dir=" + profile, "--no-first-run",
-  "--disable-extensions", "--disable-background-networking", "--hide-scrollbars", "about:blank",
+  "--disable-extensions", "--disable-background-networking", "--hide-scrollbars",
+  // Hosted runners do not let Chromium set up its sandbox.
+  ...(process.env.CI ? ["--no-sandbox"] : []), "about:blank",
 ], { stdio: "ignore" });
 
 async function ready() {
